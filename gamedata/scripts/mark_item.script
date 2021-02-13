@@ -1,0 +1,259 @@
+-- ==================================
+--           LOGIC N STUFF
+-- ==================================
+local original_owner = {}
+local price
+
+function get_original_owner(obj_id) return original_owner[obj_id] end
+
+function update_original_owner_from_repair(UIInventory)
+    local obj = level.object_by_id(UIInventory.upgr.id)
+
+    if (not obj) then return nil end
+
+    update_original_owner(obj:id())
+
+	local isRepairable = obj:condition() < 0.99
+	UIInventory.npc_up_repair:Enable(isRepairable)
+    db.actor:give_money(-price)
+end
+
+function update_original_owner(obj_id)
+    original_owner[obj_id] = db.actor:character_name()
+end
+
+local function on_item_after_move(npc_id, obj, mode, bag_id)
+    if mode ~= 'loot' then return end
+
+    if original_owner[obj:id()] ~= nil then return end
+
+    local is_weapon = IsWeapon(obj)
+    local is_armour = IsOutfit(obj) or IsHeadgear(obj)
+
+    if not is_weapon and not is_armour then return end
+
+    if bag_id == 1 then
+        original_owner[obj:id()] = db.actor:character_name()
+    else
+        local npc = get_object_by_id(npc_id)
+        original_owner[obj:id()] = npc:character_name()
+    end
+end
+
+-- ==================================
+--              MAIN
+-- ==================================
+
+function save_state(m_data) m_data.original_owner = original_owner end
+
+function load_state(m_data) original_owner = m_data.original_owner end
+
+function on_game_start()
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+    RegisterScriptCallback("ActorMenu_on_item_after_move", on_item_after_move)
+end
+
+-- ==================================
+--           MONKEY TOWN
+-- ==================================
+
+-- buff condition
+local base_set_weapon_drop_condition = death_manager.set_weapon_drop_condition
+
+function death_manager.set_weapon_drop_condition(npc, itm)
+    base_set_weapon_drop_condition(npc, itm)
+
+    local condition = math.random(20, 80) / 100
+
+    itm:set_condition(condition)
+    original_owner[itm:id()] = npc:character_name()
+end
+
+local base_get_condition_by_rank = death_manager.get_condition_by_rank
+
+function death_manager.get_condition_by_rank(rank, coef)
+    return math.random(20, 80) / 100
+end
+
+local base_validate_drop = death_manager.validate_drop
+
+function death_manager.validate_drop(section)
+	return true
+end
+
+-- restrict marked item trading
+local base_get_item_trade_status = utils_item.get_item_trade_status
+
+function utils_item.get_item_trade_status(obj, profile)
+    local note = base_get_item_trade_status(obj, profile)
+
+    local og_owner = get_original_owner(obj:id())
+
+    if note == 4 and (og_owner ~= nil and og_owner ~= db.actor:character_name()) then
+        note = 5
+    end
+
+    return note
+end
+
+-- update no_trade tool tip
+local base_check_trade_mode = utils_ui.UICellItem.Check_TradeMode
+
+function utils_ui.UICellItem.Check_TradeMode(UICellItem, obj, sec)
+    local r_val = base_check_trade_mode(UICellItem, obj, sec)
+
+    if (UICellItem.showcase ~= 0) then return false end
+
+    local profile = UICellItem.container.trade_profile
+    if not (profile and profile.mode) then return false end
+
+	local status = utils_item.get_item_trade_status(obj, profile)
+
+	if status == 5 then 
+		UICellItem.flags.note = status
+		UICellItem.flags.no_trade = true
+		UICellItem.flags.note_str = game.translate_string( "st_no_trade_tip_" .. status)
+
+		r_val = false
+	end
+
+    return r_val
+end
+
+-- modify repair logic
+
+local base_UIInventory_InitCallbacks = ui_inventory.UIInventory.InitCallbacks
+
+function ui_inventory.UIInventory.InitCallbacks(UIInventory)
+    UIInventory:AddCallback("sell", ui_events.BUTTON_CLICKED, UIInventory.TMode_Sell, UIInventory)
+    UIInventory:AddCallback("buy", ui_events.BUTTON_CLICKED, UIInventory.TMode_Buy, UIInventory)
+    UIInventory:AddCallback("put_all", ui_events.BUTTON_CLICKED, UIInventory.LMode_PutAll, UIInventory)
+    UIInventory:AddCallback("take_all", ui_events.BUTTON_CLICKED, UIInventory.LMode_TakeAll, UIInventory)
+    UIInventory:AddCallback("repair", ui_events.BUTTON_CLICKED, UIInventory.RMode_OnRepair, UIInventory)
+    UIInventory:AddCallback("mbr", ui_events.MESSAGE_BOX_YES_CLICKED, UIInventory.RMode_RepairYes, UIInventory)
+    UIInventory:AddCallback("mbr", ui_events.MESSAGE_BOX_NO_CLICKED, RMode_RepairOther, UIInventory)
+    UIInventory:AddCallback("mbr", ui_events.MESSAGE_BOX_OK_CLICKED, RMode_RepairOther, UIInventory)
+    UIInventory:AddCallback("mbu", ui_events.MESSAGE_BOX_YES_CLICKED, UIInventory.RMode_UpgradeYes, UIInventory)
+    UIInventory:AddCallback("mbu", ui_events.MESSAGE_BOX_NO_CLICKED, UIInventory.Discard, UIInventory)
+    UIInventory:AddCallback("update_owner", ui_events.MESSAGE_BOX_YES_CLICKED, update_original_owner_from_repair, UIInventory)
+    UIInventory:AddCallback("update_owner", ui_events.MESSAGE_BOX_NO_CLICKED, UIInventory.Discard, UIInventory)
+    UIInventory:AddCallback("update_owner", ui_events.MESSAGE_BOX_OK_CLICKED, UIInventory.Discard, UIInventory)
+end
+
+local base_RMode_InitItem = ui_inventory.UIInventory.RMode_InitItem
+
+function ui_inventory.UIInventory.RMode_InitItem(UIInventory, obj, bag, idx)
+    base_RMode_InitItem(UIInventory, obj, bag, idx)
+
+    if (not obj) then return end
+
+    local og_owner = get_original_owner(obj:id())
+
+    if og_owner ~= nil and og_owner ~= db.actor:character_name() then
+        UIInventory.npc_up_repair:Enable(true)
+    end
+end
+
+local base_UIInv_InitControls = ui_inventory.UIInventory.InitControls
+
+function ui_inventory.UIInventory.InitControls(UIInventory)
+    base_UIInv_InitControls(UIInventory)
+    UIInventory.message_box_owner = CUIMessageBoxEx()
+    UIInventory:Register(UIInventory.message_box_owner, "update_owner")
+end
+
+local base_repair = ui_inventory.UIInventory.RMode_RepairYes
+
+function ui_inventory.UIInventory.RMode_RepairYes(UIInventory)
+    base_repair(UIInventory)
+
+    if (not UIInventory.upgr.id) then return end
+
+    local obj = level.object_by_id(UIInventory.upgr.id)
+    if (not obj) then return end
+
+    local og_owner = get_original_owner(obj:id())
+
+    if og_owner ~= nil and og_owner ~= db.actor:character_name() then
+		UIInventory.npc_up_repair:Enable(true)
+        show_update_owner(UIInventory)
+    end
+end
+
+function RMode_RepairOther(UIInventory)
+    if (not UIInventory.upgr.id) then return end
+
+    local obj = level.object_by_id(UIInventory.upgr.id)
+    if (not obj) then return end
+
+    local og_owner = get_original_owner(obj:id())
+
+    if og_owner ~= nil and og_owner ~= db.actor:character_name() then
+        show_update_owner(UIInventory)
+    end
+    -- self:Print(nil, "Discard")
+end
+
+function show_update_owner(UIInventory)
+    -- UIInventory:Print(nil, "RMode_OnRepair")
+
+    if (not UIInventory.upgr.id) then return end
+
+    local obj = level.object_by_id(UIInventory.upgr.id)
+    if (not obj) then return end
+
+    local sec = obj:section()
+    local cond = obj:condition()
+
+    -- local str = inventory_upgrades.question_repair_item( sec, cond, true )
+    -- if (str == nil) then
+    -- 	str = game.translate_string("st_upgr_cant_do")
+    -- end
+
+    local cost = ini_sys:r_u32(sec, "cost")
+	local cof = game_difficulties.get_eco_factor("sell") or 1.67
+
+	price = math.floor( cost * (1 - 0.4789) * cof )
+    local f_cost = string.format("Cost %s RU. Remove previous owner's details?",price)
+
+    local str
+    local can_afford = db.actor:money() >= price
+
+    if db.actor:money() < price then
+        str = "- Remove Previous Owner Details -\\n"..game.translate_string("st_upgr_cost")..": "..price.." RU\\n"..game.translate_string("ui_inv_not_enought_money")..": "..price-db.actor:money().." RU"
+    else
+        str = game.translate_string("st_upgr_cost").." "..price.." RU. "..game.translate_string("ui_st_inv_repair_rm_owner").."?"
+    end
+
+    if can_afford then
+        UIInventory.message_box_owner:InitMessageBox("message_box_yes_no")
+    else
+        UIInventory.message_box_owner:InitMessageBox("message_box_ok")
+    end
+
+
+    UIInventory.message_box_owner:SetText(str)
+    UIInventory.message_box_owner:ShowDialog(true)
+
+end
+
+local base_UIInventory_RMode_OnRepair = ui_inventory.UIInventory.RMode_OnRepair
+
+function ui_inventory.UIInventory.RMode_OnRepair(UIInventory)
+	if (not UIInventory.upgr.id) then
+		return
+	end
+	
+	local obj = level.object_by_id(UIInventory.upgr.id)
+	if (not obj) then
+		return
+	end
+
+	local isRepairable = obj:condition() < 0.99
+	if isRepairable then
+		base_UIInventory_RMode_OnRepair(UIInventory)
+	else
+		show_update_owner(UIInventory)
+	end
+end

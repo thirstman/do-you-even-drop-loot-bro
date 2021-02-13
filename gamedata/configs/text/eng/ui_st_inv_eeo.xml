@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+    <string id="st_no_trade_tip_5">
+        <text>The item appears to have belonged to another s.t.a.l.k.e.r.</text>
+    </string>
+    <string id="ui_st_inv_repair_rm_owner">
+        <text>Remove previous owner's details</text>
+    </string>
+</string_table>
