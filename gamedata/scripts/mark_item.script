@@ -46,7 +46,13 @@ end
 
 function save_state(m_data) m_data.original_owner = original_owner end
 
-function load_state(m_data) original_owner = m_data.original_owner end
+function load_state(m_data)
+    if m_data.original_owner ~= nil then
+        original_owner = m_data.original_owner
+    else
+        original_owner = {}
+    end
+end
 
 function on_game_start()
     RegisterScriptCallback("save_state", save_state)
